@@ -1,0 +1,21 @@
+
+services:
+  notesync:
+    build: ./
+    command: ./testjunior
+    ports:
+      - 8080:8080
+    depends_on:
+      - db
+    environment:
+      - DB_PASSWORD=qwe230405180405
+
+  db:
+    restart: always
+    image: postgres:latest
+    volumes:
+    - ./.database/postgres/data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=qwe230405180405
+    ports:
+      - 5436:5432

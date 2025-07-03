@@ -11,6 +11,8 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/subosito/gotenv v1.6.0
 	golang.org/x/crypto v0.32.0
+	github.com/swaggo/gin-swagger v1.6.1
+	github.com/swaggo/files v1.2.3
 )
 
 require (

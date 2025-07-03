@@ -8,7 +8,12 @@ import (
 
 type Authorization interface {
 	CreateUser(user model.User) (int, error)
-	GetUser(username string, password string) (model.User, error)
+	GetUser(username, password string) (model.User, error)
+	CreateRefreshToken(userID int, tokenHash, userAgent, ip string) error
+	GetActiveRefreshToken(userID int) (model.RefreshToken, error)
+	DeactivateRefreshToken(tokenID int) error
+	GetRefreshTokenByHash(tokenHash string) (model.RefreshToken, error)
+	GetAllActiveRefreshTokens() ([]model.RefreshToken, error)
 }
 
 type Repository struct {

@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"testjunior/internal/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/gorm/dialects/postgres"
+	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (h *Handler) SignUp(c *gin.Context) {
@@ -47,4 +51,98 @@ func (h *Handler) SignIn(c *gin.Context) {
 	c.JSON(http.StatusOK, map[string]interface{}{
 		"token": token,
 	})
+}
+
+// Получение пары токенов по user_id
+func (h *Handler) GetTokenPair(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		newErrorResponse(c, http.StatusBadRequest, "user_id required")
+		return
+	}
+	// user_id должен быть int
+	var id int
+	_, err := fmt.Sscanf(userID, "%d", &id)
+	if err != nil {
+		newErrorResponse(c, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	ua := c.GetHeader("User-Agent")
+	ip := c.ClientIP()
+	access, refresh, err := h.services.Authorization.GenerateTokenPair(id, ua, ip)
+	if err != nil {
+		newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, map[string]string{
+		"access":  access,
+		"refresh": refresh,
+	})
+}
+
+type RefreshInput struct {
+	Refresh string `json:"refresh" binding:"required"`
+}
+
+func (h *Handler) RefreshTokenPair(c *gin.Context) {
+	var input RefreshInput
+	if err := c.BindJSON(&input); err != nil {
+		newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ua := c.GetHeader("User-Agent")
+	ip := c.ClientIP()
+	access, refresh, err := h.services.Authorization.RefreshTokenPair(input.Refresh, ua, ip)
+	if err != nil {
+		newErrorResponse(c, http.StatusUnauthorized, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, map[string]string{
+		"access":  access,
+		"refresh": refresh,
+	})
+}
+
+func (h *Handler) GetMe(c *gin.Context) {
+	header := c.GetHeader("Authorization")
+	if header == "" {
+		newErrorResponse(c, http.StatusUnauthorized, "empty auth header")
+		return
+	}
+	var token string
+	fmt.Sscanf(header, "Bearer %s", &token)
+	if token == "" {
+		newErrorResponse(c, http.StatusUnauthorized, "invalid auth header")
+		return
+	}
+	userID, err := h.services.Authorization.ParseToken(token)
+	if err != nil {
+		newErrorResponse(c, http.StatusUnauthorized, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, map[string]interface{}{"user_id": userID})
+}
+
+type LogoutInput struct {
+	Refresh string `json:"refresh" binding:"required"`
+}
+
+func (h *Handler) Logout(c *gin.Context) {
+	var input LogoutInput
+	if err := c.BindJSON(&input); err != nil {
+		newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	tokens, err := h.services.Authorization.repo.GetAllActiveRefreshTokens()
+	if err != nil {
+		newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, t := range tokens {
+		if bcrypt.CompareHashAndPassword([]byte(t.TokenHash), []byte(input.Refresh)) == nil {
+			h.services.Authorization.repo.DeactivateRefreshToken(t.ID)
+			break
+		}
+	}
+	c.JSON(http.StatusOK, map[string]string{"status": "logout"})
 }

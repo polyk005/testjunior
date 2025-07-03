@@ -1,9 +1,13 @@
 package service
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"testjunior/internal/model"
 	"testjunior/internal/repository"
 	"time"
@@ -13,9 +17,11 @@ import (
 )
 
 const (
-	salt       = "generate_hash_code"
-	signingKey = "generate_hash_code"
-	tokenTTL   = 24 * time.Hour
+	salt             = "generate_hash_code"
+	signingKey       = "generate_hash_code"
+	tokenTTL         = 24 * time.Hour
+	refreshTokenLength = 32
+	webhookURL = "http://webhook-url" // заменить на реальный URL
 )
 
 type TokenClaims struct {
@@ -79,6 +85,82 @@ func (s *AuthService) ParseToken(accesstoken string) (int, error) {
 		return 0, errors.New("token claims are not of type *tokenClaims")
 	}
 	return claims.UserId, nil
+}
+
+func (s *AuthService) GenerateTokenPair(userID int, userAgent, ip string) (string, string, error) {
+	// Access token (JWT SHA512)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, &TokenClaims{
+		jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(tokenTTL).Unix(),
+			IssuedAt:  time.Now().Unix(),
+		},
+		userID,
+	})
+	accessToken, err := token.SignedString([]byte(signingKey))
+	if err != nil {
+		return "", "", err
+	}
+
+	// Refresh token (random, base64, bcrypt)
+	refreshRaw := make([]byte, refreshTokenLength)
+	_, err = rand.Read(refreshRaw)
+	if err != nil {
+		return "", "", err
+	}
+	refreshToken := base64.StdEncoding.EncodeToString(refreshRaw)
+	refreshHash, err := s.HashPassword(refreshToken)
+	if err != nil {
+		return "", "", err
+	}
+	// Сохраняем refresh токен
+	err = s.repo.CreateRefreshToken(userID, refreshHash, userAgent, ip)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, refreshToken, nil
+}
+
+func (s *AuthService) RefreshTokenPair(refreshToken, userAgent, ip string) (string, string, error) {
+	// refreshToken приходит в base64
+	// Найти активный refresh токен по хешу
+	tokens, err := s.repo.GetAllActiveRefreshTokens()
+	if err != nil {
+		return "", "", err
+	}
+	var matchedToken *model.RefreshToken
+	for _, t := range tokens {
+		if bcrypt.CompareHashAndPassword([]byte(t.TokenHash), []byte(refreshToken)) == nil {
+			matchedToken = &t
+			break
+		}
+	}
+	if matchedToken == nil {
+		return "", "", errors.New("invalid refresh token")
+	}
+	// Проверка user-agent
+	if matchedToken.UserAgent != userAgent {
+		_ = s.repo.DeactivateRefreshToken(matchedToken.ID)
+		return "", "", errors.New("user-agent mismatch, token deauthorized")
+	}
+	// Проверка IP, если новый — отправить webhook
+	if matchedToken.IP != ip {
+		go func() {
+			_ = sendWebhook(matchedToken.UserID, ip, userAgent)
+		}()
+	}
+	// Деактивировать старый refresh токен (one-time use)
+	err = s.repo.DeactivateRefreshToken(matchedToken.ID)
+	if err != nil {
+		return "", "", err
+	}
+	// Сгенерировать новую пару
+	return s.GenerateTokenPair(matchedToken.UserID, userAgent, ip)
+}
+
+func sendWebhook(userID int, ip, userAgent string) error {
+	body := []byte(fmt.Sprintf(`{"user_id":%d,"ip":"%s","user_agent":"%s"}`, userID, ip, userAgent))
+	_, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	return err
 }
 
 // func (s *AuthService) CheckToken(token string) error {

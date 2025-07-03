@@ -8,10 +8,13 @@ import (
 	"testjunior/internal/service"
 
 	_ "github.com/lib/pq"
+	_ "testjunior/docs"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/subosito/gotenv"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	swaggerFiles "github.com/swaggo/files"
 )
 
 func main() {
@@ -42,7 +45,12 @@ func main() {
 	handlers := handler.NewHandler(services)
 
 	srv := new(testjunior.Server)
-	if err := srv.Run(viper.GetString("port"), handlers.InitRoutes()); err != nil {
+
+	// Swagger
+	h := handlers.InitRoutes()
+	h.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	if err := srv.Run(viper.GetString("port"), h); err != nil {
 		logrus.Fatalf("error occured while running http server: %s", err.Error())
 	}
 }

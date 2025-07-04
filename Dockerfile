@@ -1,19 +1,32 @@
-FROM golang:1.23
+FROM golang:1.22-alpine AS builder
 
-RUN go version
-ENV GOPATH=/
+WORKDIR /app
 
-COPY ./ ./
+# Копируем сначала только файлы модулей для кэширования
+COPY go.mod go.sum ./
+RUN go mod download
 
-# install psql
-RUN apt-get update
-RUN apt-get -y install postgresql-client
+# Копируем остальные файлы
+COPY . .
 
-# make wait-for-postgres.sh executable
+# Собираем приложение
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/testjunior ./cmd/main.go
+
+# Финальный образ
+FROM alpine:latest
+
+WORKDIR /app
+
+# Копируем бинарник и скрипты
+COPY --from=builder /app/testjunior .
+COPY --from=builder /app/wait-for-postgres.sh .
 RUN chmod +x wait-for-postgres.sh
 
-# build go app
-RUN go mod download
-RUN go build -o testjunior ./cmd/main.go
+# Устанавливаем зависимости
+RUN apk add --no-cache postgresql-client
 
-CMD ["./testjunior"]
+EXPOSE 8080
+
+COPY .env .
+COPY configs/ /app/configs/
+CMD ["./wait-for-postgres.sh", "db", "./testjunior"]

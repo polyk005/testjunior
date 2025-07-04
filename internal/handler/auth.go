@@ -6,9 +6,6 @@ import (
 	"testjunior/internal/model"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm/dialects/postgres"
-	"github.com/spf13/viper"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (h *Handler) SignUp(c *gin.Context) {
@@ -133,16 +130,13 @@ func (h *Handler) Logout(c *gin.Context) {
 		newErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	tokens, err := h.services.Authorization.repo.GetAllActiveRefreshTokens()
+
+	// Используйте методы сервиса вместо прямого доступа к repo
+	err := h.services.Authorization.DeactivateRefreshTokenByValue(input.Refresh)
 	if err != nil {
 		newErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	for _, t := range tokens {
-		if bcrypt.CompareHashAndPassword([]byte(t.TokenHash), []byte(input.Refresh)) == nil {
-			h.services.Authorization.repo.DeactivateRefreshToken(t.ID)
-			break
-		}
-	}
+
 	c.JSON(http.StatusOK, map[string]string{"status": "logout"})
 }
